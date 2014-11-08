@@ -114,6 +114,7 @@ pub struct ConfigureMake {
     tools: NativeTools,
     args:  Vec<String>,
     built_libs: Vec<(Path, String)>,
+    make_only_dirs: Option<Vec<Path>>,
 }
 impl ConfigureMake {
     pub fn new(args: &[String],
@@ -125,8 +126,21 @@ impl ConfigureMake {
             built_libs: built_libs.iter().map(|&(ref p, ref l): &(Path, String)| {
                 assert!(p.is_relative());
                 (p.clone(), l.clone())
-            }).collect()
+            }).collect(),
+            make_only_dirs: None,
         }
+    }
+    pub fn make_only_dir(&mut self, dir: Path) -> &mut ConfigureMake {
+        let mut m = self.make_only_dirs
+            .take()
+            .unwrap_or_else(|| Vec::new() );
+
+        m.push(dir);
+        self.make_only_dirs = Some(m);
+        self
+    }
+    pub fn make_all(&mut self) {
+        self.make_only_dirs = None;
     }
 
     pub fn configure(&self) {
@@ -163,7 +177,19 @@ impl ConfigureMake {
         let out_dir = Path::new(getenv("OUT_DIR").unwrap());
         assert!(change_dir(&out_dir));
 
-        run_tool(Command::new(&make_prog));
+        let mut cmd = Command::new(&make_prog);
+
+        match self.make_only_dirs {
+            Some(ref dirs) => {
+                for dir in dirs.iter() {
+                    let mut dir_cmd = cmd.clone();
+                    dir_cmd.arg("-C")
+                        .arg(dir.display().to_string());
+                    run_tool(dir_cmd);
+                }
+            }
+            None => run_tool(cmd),
+        }
 
         assert!(change_dir(&src_dir));
 
