@@ -1,0 +1,4 @@
+[package]
+name = "pnacl-build-helper"
+version = "0.0.1"
+authors = ["Richard Diamond"]
