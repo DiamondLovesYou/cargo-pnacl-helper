@@ -153,6 +153,9 @@ impl ConfigureMake {
         let mut cmd = Command::new(&cfg);
         cmd.args(self.args.as_slice());
 
+        cmd.arg(format!("--host={}",
+                        getenv("TARGET").unwrap()));
+
         let cc_arg = format!("CC={}",
                              self.tools.cc.display());
         let cxx_arg = format!("CXX={}",
