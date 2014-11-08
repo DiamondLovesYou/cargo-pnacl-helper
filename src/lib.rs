@@ -1,8 +1,12 @@
-use std::collections::RingBuf;
-use std::io::{Command, TempDir};
-use std::os::getenv;
+extern crate libc;
 
-enum Mode {
+use std::collections::RingBuf;
+use std::default::Default;
+use std::io::{Command, TempDir};
+use std::os::{getenv, getcwd, change_dir};
+
+#[deriving(Show, Eq, PartialEq, Clone, Hash)]
+pub enum Mode {
     Portable,
     Native(&'static str),
 }
@@ -20,34 +24,37 @@ fn get_platform_str() -> &'static str {
     "windows"
 }
 
-pub struct Archive {
-    cc:  Path,
-    cxx: Path,
-    ar:  Path,
-    ranlib: Path,
-
-    tmp: TempDir,
-    doubles: u64,
-    obj_files: RingBuf<Path>,
-    libname: String,
-    output: Path,
+pub fn get_sdk_root() -> Path {
+    match getenv("NACL_SDK_ROOT") {
+        None => panic!("Please set NACL_SDK_ROOT to your local pepper sdk"),
+        Some(p) => Path::new(p),
+    }
 }
-impl Archive {
-    pub fn new(out_stem: &str) -> Archive {
-        let mode = match getenv("TARGET").unwrap().as_slice() {
-            "le32-unknown-nacl" => Portable,
-            "i686-unknown-nacl" => Native("i686"),
-            "x86_64-unknown-nacl" => Native("x86_64"),
-            "arm-unknown-nacl" => Native("arm"),
-            _ => panic!("todo"),
-        };
+pub fn get_nacl_target() -> Option<Mode> {
+    getenv("TARGET").and_then(|v| {
+        match v.as_slice() {
+            "le32-unknown-nacl" => Some(Portable),
+            "i686-unknown-nacl" => Some(Native("i686")),
+            "x86_64-unknown-nacl" => Some(Native("x86_64")),
+            "arm-unknown-nacl" => Some(Native("arm")),
+            _ => None,
+        }
+    })
+}
 
-        let pepper = match getenv("NACL_SDK_ROOT") {
-            None => panic!("Please set NACL_SDK_ROOT to your local pepper sdk"),
-            Some(p) => Path::new(p),
-        };
+#[deriving(Clone, Hash)]
+pub struct NativeTools {
+    cc:     Path,
+    cxx:    Path,
+    ar:     Path,
+    ranlib: Path,
+}
 
-        let pepper = pepper.join("toolchain");
+impl Default for NativeTools {
+    fn default() -> NativeTools {
+        let mode = get_nacl_target().expect("unknown target");
+
+        let pepper = get_sdk_root().join("toolchain");
 
         let (cc, cxx, ar, ranlib) = match mode {
             Portable => {
@@ -93,6 +100,107 @@ impl Archive {
             }
             Native(_) => unreachable!(),
         };
+
+        NativeTools {
+            cc: cc,
+            cxx: cxx,
+            ar: ar,
+            ranlib: ranlib,
+        }
+    }
+}
+
+pub struct ConfigureMake {
+    tools: NativeTools,
+    args:  Vec<String>,
+    built_libs: Vec<(Path, String)>,
+}
+impl ConfigureMake {
+    pub fn new(args: &[String],
+               built_libs: &[(Path, String)]) -> ConfigureMake {
+
+        ConfigureMake {
+            tools: Default::default(),
+            args:  args.iter().map(|v| v.clone() ).collect(),
+            built_libs: built_libs.iter().map(|&(ref p, ref l): &(Path, String)| {
+                assert!(p.is_relative());
+                (p.clone(), l.clone())
+            }).collect()
+        }
+    }
+
+    pub fn configure(&self) {
+        let src_dir = getcwd();
+        let cfg = src_dir.join("configure");
+
+        let out_dir = Path::new(getenv("OUT_DIR").unwrap());
+        assert!(change_dir(&out_dir));
+
+        let mut cmd = Command::new(&cfg);
+        cmd.args(self.args.as_slice());
+
+        let cc_arg = format!("CC={}",
+                             self.tools.cc.display());
+        let cxx_arg = format!("CXX={}",
+                              self.tools.cxx.display());
+        let ar_arg = format!("AR={}",
+                             self.tools.ar.display());
+        let ranlib_arg = format!("RANLIB={}",
+                                 self.tools.ranlib.display());
+        cmd.arg(cc_arg);
+        cmd.arg(cxx_arg);
+        cmd.arg(ar_arg);
+        cmd.arg(ranlib_arg);
+
+        run_tool(cmd);
+        assert!(change_dir(&src_dir));
+    }
+
+    pub fn make(self) {
+        let make_prog = Path::new(getenv("MAKE").unwrap_or_else(|| "make".to_string() ));
+
+        let src_dir = getcwd();
+        let out_dir = Path::new(getenv("OUT_DIR").unwrap());
+        assert!(change_dir(&out_dir));
+
+        run_tool(Command::new(&make_prog));
+
+        assert!(change_dir(&src_dir));
+
+        for (p, l) in self.built_libs.into_iter() {
+            println!("cargo:rustc-flags=-L {} -l {}",
+                     out_dir.join(p).display(), l);
+        }
+    }
+}
+
+fn run_tool(mut cmd: Command) {
+    use libc;
+    use std::io::process::InheritFd;
+
+    cmd.stdout(InheritFd(libc::STDOUT_FILENO));
+    cmd.stderr(InheritFd(libc::STDERR_FILENO));
+    assert!(cmd.status().unwrap().success());
+}
+
+pub struct Archive {
+    cc:  Path,
+    cxx: Path,
+    ar:  Path,
+    ranlib: Path,
+
+    tmp: TempDir,
+    doubles: u64,
+    obj_files: RingBuf<Path>,
+    libname: String,
+    output: Path,
+}
+impl Archive {
+    pub fn new(out_stem: &str) -> Archive {
+        let NativeTools {
+            cc, cxx, ar, ranlib,
+        } = Default::default();
+
         let out_dir = getenv("OUT_DIR").unwrap();
 
         Archive {
@@ -135,7 +243,7 @@ impl Archive {
     }
 
     fn run(&mut self, mut cmd: Command) -> &mut Archive {
-        assert!(cmd.status().unwrap().success());
+        run_tool(cmd);
         self
     }
 
