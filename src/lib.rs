@@ -216,8 +216,10 @@ impl ConfigureMake {
         assert!(change_dir(&src_dir));
 
         for (p, l) in self.built_libs.into_iter() {
+            let p = out_dir.join(p);
             println!("cargo:rustc-flags=-L {} -l {}",
-                     out_dir.join(p).display(), l);
+                     p.display(), l);
+            println!("cargo:libdir={}", p.display());
         }
     }
 }
