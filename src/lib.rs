@@ -207,6 +207,8 @@ fn run_tool(mut cmd: Command) {
     use libc;
     use std::io::process::InheritFd;
 
+    println!("{}", cmd);
+
     cmd.stdout(InheritFd(libc::STDOUT_FILENO));
     cmd.stderr(InheritFd(libc::STDERR_FILENO));
     assert!(cmd.status().unwrap().success());
