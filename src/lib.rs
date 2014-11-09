@@ -119,10 +119,29 @@ pub struct ConfigureMake {
 impl ConfigureMake {
     pub fn new(args: &[String],
                built_libs: &[(Path, String)]) -> ConfigureMake {
+        let sdk = get_sdk_root();
+        let target = get_nacl_target();
+
+        let extra_flags = format!("-I{}/include",
+                                  sdk.display());
+        let extra_flags = match target {
+            Some(Portable) => format!("{} -I{}/include/pnacl",
+                                      extra_flags, sdk.display()),
+            _ => extra_flags,
+        };
+        let args = args.iter()
+            .map(|str| {
+                if str.as_slice().starts_with("CFLAGS=") ||
+                    str.as_slice().starts_with("CXXFLAGS=") {
+                    format!("{} {}", str, extra_flags)
+                } else {
+                    str.to_string()
+                }
+            }).collect();
 
         ConfigureMake {
             tools: Default::default(),
-            args:  args.iter().map(|v| v.clone() ).collect(),
+            args:  args,
             built_libs: built_libs.iter().map(|&(ref p, ref l): &(Path, String)| {
                 assert!(p.is_relative());
                 (p.clone(), l.clone())
