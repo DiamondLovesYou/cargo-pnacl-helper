@@ -162,8 +162,8 @@ impl ConfigureMake {
         self.make_only_dirs = None;
     }
 
-    pub fn configure(&self) {
-        let src_dir = getcwd();
+    pub fn configure(&self, root: Option<Path>) {
+        let src_dir = root.unwrap_or_else(|| getcwd() );
         let cfg = src_dir.join("configure");
 
         let out_dir = Path::new(getenv("OUT_DIR").unwrap());
