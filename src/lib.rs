@@ -298,6 +298,19 @@ impl Archive {
         run_tool(cmd);
         self
     }
+    fn build_cflags() -> Vec<String> {
+        let mut a = Vec::new();
+
+        let sdk = get_sdk_root();
+        let target = get_nacl_target();
+
+        a.push(format!("-I{}/include", sdk.display()));
+        match target {
+            Some(Portable) => a.push(format!("-I{}/include/pnacl", sdk.display())),
+            _ => (),
+        }
+        a
+    }
 
     pub fn cc(&mut self, src: &str, args: &[String]) -> &mut Archive {
         let (src, obj) = self.src_obj(src);
@@ -307,7 +320,8 @@ impl Archive {
             .arg(src)
             .arg("-o")
             .arg(obj)
-            .args(args);
+            .args(args)
+            .args(Archive::build_cflags().as_slice());
 
         self.run(cmd)
     }
@@ -320,7 +334,8 @@ impl Archive {
             .arg(src)
             .arg("-o")
             .arg(obj)
-            .args(args);
+            .args(args)
+            .args(Archive::build_cflags().as_slice());
 
         self.run(cmd)
     }
