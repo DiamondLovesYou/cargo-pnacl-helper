@@ -201,6 +201,9 @@ impl ConfigureMake {
 
         let mut cmd = Command::new(&make_prog);
 
+        cmd.arg("-j")
+            .arg(getenv("NUM_JOBS").unwrap_or_else(|| "1".to_string() ));
+
         match self.make_only_dirs {
             Some(ref dirs) => {
                 for dir in dirs.iter() {
