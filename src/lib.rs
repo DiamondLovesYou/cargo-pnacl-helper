@@ -77,7 +77,7 @@ impl Default for NativeTools {
                 let ranlib = [arch, "-nacl-ranlib"].concat();
 
                 let pepper = pepper
-                    .join_many([[get_platform_str(), "_x86_newlib"].concat(),
+                    .join_many([[get_platform_str(), "_x86_glibc"].concat(),
                                 "bin".to_string()]);
                 (pepper.join(cc),
                  pepper.join(cxx),
