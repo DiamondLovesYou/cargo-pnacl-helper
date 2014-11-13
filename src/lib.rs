@@ -129,6 +129,7 @@ impl ConfigureMake {
                                       extra_flags, sdk.display()),
             _ => extra_flags,
         };
+        let extra_flags = format!("{} -D__USE_GNU", extra_flags);
         let args = args.iter()
             .map(|str| {
                 if str.as_slice().starts_with("CFLAGS=") ||
