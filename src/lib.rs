@@ -33,10 +33,10 @@ pub fn get_sdk_root() -> Path {
 pub fn get_nacl_target() -> Option<Mode> {
     getenv("TARGET").and_then(|v| {
         match v.as_slice() {
-            "le32-unknown-nacl" => Some(Portable),
-            "i686-unknown-nacl" => Some(Native("i686")),
-            "x86_64-unknown-nacl" => Some(Native("x86_64")),
-            "arm-unknown-nacl" => Some(Native("arm")),
+            "le32-unknown-nacl" => Some(Mode::Portable),
+            "i686-unknown-nacl" => Some(Mode::Native("i686")),
+            "x86_64-unknown-nacl" => Some(Mode::Native("x86_64")),
+            "arm-unknown-nacl" => Some(Mode::Native("arm")),
             _ => None,
         }
     })
@@ -57,7 +57,7 @@ impl Default for NativeTools {
         let pepper = get_sdk_root().join("toolchain");
 
         let (cc, cxx, ar, ranlib) = match mode {
-            Portable => {
+            Mode::Portable => {
                 let cc     = "pnacl-clang";
                 let cxx    = "pnacl-clang++";
                 let ar     = "pnacl-ar";
@@ -70,35 +70,35 @@ impl Default for NativeTools {
                  pepper.join(ar),
                  pepper.join(ranlib))
             }
-            Native(arch) if arch == "i686" || arch == "x86_64" => {
+            Mode::Native(arch) if arch == "i686" || arch == "x86_64" => {
                 let cc     = [arch, "-nacl-gcc"].concat();
                 let cxx    = [arch, "-nacl-g++"].concat();
                 let ar     = [arch, "-nacl-ar"].concat();
                 let ranlib = [arch, "-nacl-ranlib"].concat();
 
                 let pepper = pepper
-                    .join_many([[get_platform_str(), "_x86_glibc"].concat(),
-                                "bin".to_string()]);
+                    .join_many(&[[get_platform_str(), "_x86_glibc"].concat(),
+                                 "bin".to_string()]);
                 (pepper.join(cc),
                  pepper.join(cxx),
                  pepper.join(ar),
                  pepper.join(ranlib))
             }
-            Native("arm") => {
+            Mode::Native("arm") => {
                 let cc     = "arm-nacl-gcc";
                 let cxx    = "arm-nacl-g++";
                 let ar     = "arm-nacl-ar";
                 let ranlib = "arm-nacl-ranlib";
 
                 let pepper = pepper
-                    .join_many([[get_platform_str(), "_arm_newlib"].concat(),
-                                "bin".to_string()]);
+                    .join_many(&[[get_platform_str(), "_arm_newlib"].concat(),
+                                 "bin".to_string()]);
                 (pepper.join(cc),
                  pepper.join(cxx),
                  pepper.join(ar),
                  pepper.join(ranlib))
             }
-            Native(_) => unreachable!(),
+            Mode::Native(_) => unreachable!(),
         };
 
         NativeTools {
@@ -125,8 +125,8 @@ impl ConfigureMake {
         let extra_flags = format!("-I{}/include",
                                   sdk.display());
         let extra_flags = match target {
-            Some(Portable) => format!("{} -I{}/include/pnacl",
-                                      extra_flags, sdk.display()),
+            Some(Mode::Portable) => format!("{} -I{}/include/pnacl",
+                                            extra_flags, sdk.display()),
             _ => extra_flags,
         };
         let extra_flags = format!("{} -D__USE_GNU", extra_flags);
@@ -164,11 +164,11 @@ impl ConfigureMake {
     }
 
     pub fn configure(&self, root: Option<Path>) {
-        let src_dir = root.unwrap_or_else(|| getcwd() );
+        let src_dir = root.unwrap_or_else(|| getcwd().unwrap() );
         let cfg = src_dir.join("configure");
 
         let out_dir = Path::new(getenv("OUT_DIR").unwrap());
-        assert!(change_dir(&out_dir));
+        assert!(change_dir(&out_dir).is_ok());
 
         let mut cmd = Command::new(&cfg);
         cmd.args(self.args.as_slice());
@@ -190,15 +190,15 @@ impl ConfigureMake {
         cmd.arg(ranlib_arg);
 
         run_tool(cmd);
-        assert!(change_dir(&src_dir));
+        assert!(change_dir(&src_dir).is_ok());
     }
 
     pub fn make(self) {
         let make_prog = Path::new(getenv("MAKE").unwrap_or_else(|| "make".to_string() ));
 
-        let src_dir = getcwd();
+        let src_dir = getcwd().unwrap();
         let out_dir = Path::new(getenv("OUT_DIR").unwrap());
-        assert!(change_dir(&out_dir));
+        assert!(change_dir(&out_dir).is_ok());
 
         let mut cmd = Command::new(&make_prog);
 
@@ -217,7 +217,7 @@ impl ConfigureMake {
             None => run_tool(cmd),
         }
 
-        assert!(change_dir(&src_dir));
+        assert!(change_dir(&src_dir).is_ok());
 
         for (p, l) in self.built_libs.into_iter() {
             let p = out_dir.join(p);
@@ -298,7 +298,7 @@ impl Archive {
         (src.clone(), obj)
     }
 
-    fn run(&mut self, mut cmd: Command) -> &mut Archive {
+    fn run(&mut self, cmd: Command) -> &mut Archive {
         run_tool(cmd);
         self
     }
@@ -310,7 +310,9 @@ impl Archive {
 
         a.push(format!("-I{}/include", sdk.display()));
         match target {
-            Some(Portable) => a.push(format!("-I{}/include/pnacl", sdk.display())),
+            Some(Mode::Portable) => {
+                a.push(format!("-I{}/include/pnacl", sdk.display()))
+            }
             _ => (),
         }
         a
