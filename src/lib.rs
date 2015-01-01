@@ -5,7 +5,7 @@ use std::default::Default;
 use std::io::{Command, TempDir};
 use std::os::{getenv, getcwd, change_dir};
 
-#[deriving(Show, Eq, PartialEq, Clone, Hash)]
+#[deriving(Show, Eq, PartialEq, Clone, Hash, Copy)]
 pub enum Mode {
     Portable,
     Native(&'static str),
