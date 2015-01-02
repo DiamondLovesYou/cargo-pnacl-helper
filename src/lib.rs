@@ -63,7 +63,8 @@ impl Default for NativeTools {
                 let ar     = "pnacl-ar";
                 let ranlib = "pnacl-ranlib";
 
-                let pepper = pepper.join([get_platform_str(),"_pnacl"].concat());
+                let tc: String = [get_platform_str(), "_pnacl"].concat();
+                let pepper: Path = pepper.join(tc);
                 let pepper = pepper.join("bin");
                 (pepper.join(cc),
                  pepper.join(cxx),
@@ -71,10 +72,10 @@ impl Default for NativeTools {
                  pepper.join(ranlib))
             }
             Mode::Native(arch) if arch == "i686" || arch == "x86_64" => {
-                let cc     = [arch, "-nacl-gcc"].concat();
-                let cxx    = [arch, "-nacl-g++"].concat();
-                let ar     = [arch, "-nacl-ar"].concat();
-                let ranlib = [arch, "-nacl-ranlib"].concat();
+                let cc: String     = [arch, "-nacl-gcc"].concat();
+                let cxx: String    = [arch, "-nacl-g++"].concat();
+                let ar: String     = [arch, "-nacl-ar"].concat();
+                let ranlib: String = [arch, "-nacl-ranlib"].concat();
 
                 let pepper = pepper
                     .join_many(&[[get_platform_str(), "_x86_glibc"].concat(),
@@ -259,17 +260,19 @@ impl Archive {
 
         let out_dir = getenv("OUT_DIR").unwrap();
 
+        let d: String = ["lib", out_stem, "-objs"].concat();
+        let lib_file: String = ["lib", out_stem, ".a"].concat();
         Archive {
             cc:     cc,
             cxx:    cxx,
             ar:     ar,
             ranlib: ranlib,
 
-            tmp: TempDir::new(["lib", out_stem, "-objs"].concat().as_slice()).unwrap(),
+            tmp: TempDir::new(d.as_slice()).unwrap(),
             doubles: 1,
             obj_files: RingBuf::new(),
             libname: out_stem.to_string(),
-            output: Path::new(out_dir).join(["lib", out_stem, ".a"].concat()),
+            output: Path::new(out_dir).join(lib_file),
         }
     }
 
