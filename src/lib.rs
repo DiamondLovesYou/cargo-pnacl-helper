@@ -1,11 +1,14 @@
+#![allow(unstable)]
+
 extern crate libc;
 
+use std::cell::Cell;
 use std::collections::RingBuf;
 use std::default::Default;
 use std::io::{Command, TempDir};
-use std::os::{getenv, getcwd, change_dir};
+use std::os::{getenv, change_dir};
 
-#[deriving(Show, Eq, PartialEq, Clone, Hash, Copy)]
+#[derive(Show, Eq, PartialEq, Clone, Hash, Copy)]
 pub enum Mode {
     Portable,
     Native(&'static str),
@@ -42,7 +45,7 @@ pub fn get_nacl_target() -> Option<Mode> {
     })
 }
 
-#[deriving(Clone, Hash)]
+#[derive(Clone, Hash)]
 pub struct NativeTools {
     cc:     Path,
     cxx:    Path,
@@ -116,10 +119,16 @@ pub struct ConfigureMake {
     args:  Vec<String>,
     built_libs: Vec<(Path, String)>,
     make_only_dirs: Option<Vec<Path>>,
+
+    out_dir: Path,
+    src_dir: Path,
+
+    fresh: Cell<Option<bool>>,
 }
 impl ConfigureMake {
     pub fn new(args: &[String],
-               built_libs: &[(Path, String)]) -> ConfigureMake {
+               built_libs: &[(Path, String)],
+               src_dir: Path) -> ConfigureMake {
         let sdk = get_sdk_root();
         let target = get_nacl_target();
 
@@ -149,6 +158,11 @@ impl ConfigureMake {
                 (p.clone(), l.clone())
             }).collect(),
             make_only_dirs: None,
+
+            out_dir: Path::new(getenv("OUT_DIR").unwrap()),
+            src_dir: src_dir,
+
+            fresh: Cell::new(None),
         }
     }
     pub fn make_only_dir(&mut self, dir: Path) -> &mut ConfigureMake {
@@ -164,12 +178,75 @@ impl ConfigureMake {
         self.make_only_dirs = None;
     }
 
-    pub fn configure(&self, root: Option<Path>) {
-        let src_dir = root.unwrap_or_else(|| getcwd().unwrap() );
-        let cfg = src_dir.join("configure");
+    /// Do we need to rebuild this?
+    pub fn is_fresh(&self) -> bool {
+        use std::io::fs::{walk_dir, readdir, stat};
+        use std::io::fs::PathExtensions;
+        use std::cmp::{max, min};
+        use std::num::Int;
+        if self.fresh.get().is_some() {
+            return self.fresh.get().unwrap();
+        } else {
+            println!("checking freshness:");
+            // get the mtime of the outputs:
+            let built_libs: Vec<Path> = self.built_libs
+                .iter()
+                .map(|&(ref p, ref s)| (p, s.split(':').next().expect("invalid extern lib spec?")) )
+                // TODO: PNaCl always uses lib.a, but this convention is not constant for other targets.
+                .map(|(p, s)| p.join(format!("lib{}.a", s)) )
+                .collect();
 
-        let out_dir = Path::new(getenv("OUT_DIR").unwrap());
-        assert!(change_dir(&out_dir).is_ok());
+            let mut oldest_lib: u64 = Int::max_value();
+            for lib in built_libs.into_iter() {
+                let lib = self.out_dir.join(lib);
+                let stat = lib.stat();
+                if stat.is_err() {
+                    println!("not fresh: stat on output library failed: `{:?}`", lib.display());
+                    // not fresh. non-existant files will hit this too.
+                    self.fresh.set(Some(false));
+                    return false;
+                }
+
+                let stat = stat.unwrap();
+                oldest_lib = min(oldest_lib, stat.modified);
+            }
+
+            let mut newest_timestamp: u64 = 0;
+            let mut dir_iter = walk_dir(&self.src_dir).unwrap();
+            for dir in dir_iter {
+                let files = readdir(&dir);
+                if !files.is_ok() { continue; }
+
+                for file in files.unwrap().into_iter() {
+                    let stat = stat(&file);
+                    if !stat.is_ok() { continue; }
+                    let stat = stat.unwrap();
+
+                    newest_timestamp = max(newest_timestamp, stat.modified);
+                }
+            }
+
+            if oldest_lib >= newest_timestamp {
+                // fresh
+                println!("fresh: `{}` >= `{}`!", oldest_lib, newest_timestamp);
+                self.fresh.set(Some(true));
+            } else {
+                println!("not fresh: `{}` < `{}`!", oldest_lib, newest_timestamp);
+                // not fresh
+                self.fresh.set(Some(false));
+            }
+            println!("");
+            println!("");
+            return self.fresh.get().unwrap();
+        }
+    }
+
+    pub fn configure(&self) {
+        if self.is_fresh() { return; }
+
+        let cfg = self.src_dir.join("configure");
+
+        assert!(change_dir(&self.out_dir).is_ok());
 
         let mut cmd = Command::new(&cfg);
         cmd.args(self.args.as_slice());
@@ -191,37 +268,44 @@ impl ConfigureMake {
         cmd.arg(ranlib_arg);
 
         run_tool(cmd);
-        assert!(change_dir(&src_dir).is_ok());
+
+        println!("");
+        println!("");
+
+        assert!(change_dir(&self.src_dir).is_ok());
     }
 
     pub fn make(self) {
-        let make_prog = Path::new(getenv("MAKE").unwrap_or_else(|| "make".to_string() ));
+        if !self.is_fresh() {
+            let make_prog = Path::new(getenv("MAKE").unwrap_or_else(|| "make".to_string() ));
 
-        let src_dir = getcwd().unwrap();
-        let out_dir = Path::new(getenv("OUT_DIR").unwrap());
-        assert!(change_dir(&out_dir).is_ok());
+            assert!(change_dir(&self.out_dir).is_ok());
 
-        let mut cmd = Command::new(&make_prog);
+            let mut cmd = Command::new(&make_prog);
 
-        cmd.arg("-j")
-            .arg(getenv("NUM_JOBS").unwrap_or_else(|| "1".to_string() ));
+            cmd.arg("-j")
+                .arg(getenv("NUM_JOBS").unwrap_or_else(|| "1".to_string() ));
 
-        match self.make_only_dirs {
-            Some(ref dirs) => {
-                for dir in dirs.iter() {
-                    let mut dir_cmd = cmd.clone();
-                    dir_cmd.arg("-C")
-                        .arg(dir.display().to_string());
-                    run_tool(dir_cmd);
+            match self.make_only_dirs {
+                Some(ref dirs) => {
+                    for dir in dirs.iter() {
+                        let mut dir_cmd = cmd.clone();
+                        dir_cmd.arg("-C")
+                            .arg(dir.display().to_string());
+                        run_tool(dir_cmd);
+                    }
                 }
+                None => run_tool(cmd),
             }
-            None => run_tool(cmd),
+
+            println!("");
+            println!("");
+
+            assert!(change_dir(&self.src_dir).is_ok());
         }
 
-        assert!(change_dir(&src_dir).is_ok());
-
         for (p, l) in self.built_libs.into_iter() {
-            let p = out_dir.join(p);
+            let p = self.out_dir.join(p);
             println!("cargo:rustc-flags=-L {} -l {}",
                      p.display(), l);
             println!("cargo:libdir={}", p.display());
