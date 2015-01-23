@@ -6,7 +6,7 @@ use std::cell::Cell;
 use std::collections::RingBuf;
 use std::default::Default;
 use std::io::{Command, TempDir};
-use std::os::{getenv, change_dir};
+use std::os::{change_dir};
 
 #[derive(Show, Eq, PartialEq, Clone, Hash, Copy)]
 pub enum Mode {
@@ -24,7 +24,7 @@ fn get_platform_str() -> &'static str {
 }
 #[cfg(windows)]
 fn get_platform_str() -> &'static str {
-    "windows"
+    "win"
 }
 
 pub fn get_sdk_root() -> Path {
@@ -33,84 +33,182 @@ pub fn get_sdk_root() -> Path {
         Some(p) => Path::new(p),
     }
 }
-pub fn get_nacl_target() -> Option<Mode> {
-    getenv("TARGET").and_then(|v| {
-        match v.as_slice() {
-            "le32-unknown-nacl" => Some(Mode::Portable),
-            "i686-unknown-nacl" => Some(Mode::Native("i686")),
-            "x86_64-unknown-nacl" => Some(Mode::Native("x86_64")),
-            "arm-unknown-nacl" => Some(Mode::Native("arm")),
-            _ => None,
+pub fn get_nacl_target(v: &str) -> Option<Mode> {
+    match v.as_slice() {
+        "le32-unknown-nacl" => Some(Mode::Portable),
+        "i686-unknown-nacl" => Some(Mode::Native("i686")),
+        "x86_64-unknown-nacl" => Some(Mode::Native("x86_64")),
+        "arm-unknown-nacl" => Some(Mode::Native("arm")),
+        _ => None,
+    }
+}
+
+fn getenv(v: &str) -> Option<String> {
+    use std::os::getenv;
+    let r = getenv(v);
+    println!("{} = {:?}", v, r);
+    r
+}
+
+mod non_nacl {
+    use super::getenv;
+    fn get_var(var_base: &str) -> Result<String, String> {
+        let target = getenv("TARGET")
+            .expect("Environment variable 'TARGET' is unset");
+        let host = match getenv("HOST") {
+            None => { return Err("Environment variable 'HOST' is unset".to_string()); }
+            Some(x) => x
+        };
+        let kind = if host == target { "HOST" } else { "TARGET" };
+        let target_u = target.split('-')
+            .collect::<Vec<&str>>()
+            .connect("_");
+        let res = getenv(format!("{}_{}", var_base, target).as_slice())
+            .or_else(|| getenv(format!("{}_{}", var_base, target_u).as_slice()))
+            .or_else(|| getenv(format!("{}_{}", kind, var_base).as_slice()))
+            .or_else(|| getenv(var_base));
+
+        match res {
+            Some(res) => Ok(res),
+            None => Err("Could not get environment variable".to_string()),
         }
-    })
+    }
+    pub fn gcc(target: &str) -> Path {
+        let is_android = target.find_str("android").is_some();
+
+        let r = get_var("CC").unwrap_or(if cfg!(windows) {
+            "gcc".to_string()
+        } else if is_android {
+            format!("{}-gcc", target)
+        } else {
+            "cc".to_string()
+        });
+        Path::new(r)
+    }
+    pub fn gxx(target: &str) -> Path {
+        let is_android = target.find_str("android").is_some();
+
+        let r = get_var("CXX").unwrap_or(if cfg!(windows) {
+            "g++".to_string()
+        } else if is_android {
+            format!("{}-g++", target)
+        } else {
+            "c++".to_string()
+        });
+        Path::new(r)
+    }
+
+    pub fn ar(target: &str) -> Path {
+        let is_android = target.find_str("android").is_some();
+
+        let r = get_var("AR").unwrap_or(if is_android {
+            format!("{}-ar", target)
+        } else {
+            "ar".to_string()
+        });
+        Path::new(r)
+    }
+    pub fn ranlib(target: &str) -> Path {
+        let is_android = target.find_str("android").is_some();
+
+        let r = get_var("RANLIB").unwrap_or(if cfg!(windows) {
+            "ranlib".to_string()
+        } else if is_android {
+            format!("{}-ranlib", target)
+        } else {
+            "ranlib".to_string()
+        });
+        Path::new(r)
+    }
 }
 
 #[derive(Clone, Hash)]
 pub struct NativeTools {
-    cc:     Path,
-    cxx:    Path,
-    ar:     Path,
-    ranlib: Path,
+    pub is_nacl: bool,
+
+    pub cc:     Path,
+    pub cxx:    Path,
+    pub ar:     Path,
+    pub ranlib: Path,
+}
+impl NativeTools {
+    pub fn new(target: &str) -> NativeTools {
+        let mode = get_nacl_target(target);
+        if mode.is_none() {
+            NativeTools {
+                is_nacl: false,
+
+                cc: non_nacl::gcc(target.as_slice()),
+                cxx: non_nacl::gxx(target.as_slice()),
+                ar: non_nacl::ar(target.as_slice()),
+                ranlib: non_nacl::ranlib(target.as_slice()),
+            }
+        } else {
+            let mode = mode.unwrap();
+            let pepper = get_sdk_root().join("toolchain");
+
+            let (cc, cxx, ar, ranlib) = match mode {
+                Mode::Portable => {
+                    let cc     = "pnacl-clang";
+                    let cxx    = "pnacl-clang++";
+                    let ar     = "pnacl-ar";
+                    let ranlib = "pnacl-ranlib";
+
+                    let tc: String = [get_platform_str(), "_pnacl"].concat();
+                    let pepper: Path = pepper.join(tc);
+                    let pepper = pepper.join("bin");
+                    (pepper.join(cc),
+                     pepper.join(cxx),
+                     pepper.join(ar),
+                     pepper.join(ranlib))
+                }
+                Mode::Native(arch) if arch == "i686" || arch == "x86_64" => {
+                    let cc: String     = [arch, "-nacl-gcc"].concat();
+                    let cxx: String    = [arch, "-nacl-g++"].concat();
+                    let ar: String     = [arch, "-nacl-ar"].concat();
+                    let ranlib: String = [arch, "-nacl-ranlib"].concat();
+
+                    let pepper = pepper
+                        .join_many(&[[get_platform_str(), "_x86_glibc"].concat(),
+                                     "bin".to_string()]);
+                    (pepper.join(cc),
+                     pepper.join(cxx),
+                     pepper.join(ar),
+                     pepper.join(ranlib))
+                }
+                Mode::Native("arm") => {
+                    let cc     = "arm-nacl-gcc";
+                    let cxx    = "arm-nacl-g++";
+                    let ar     = "arm-nacl-ar";
+                    let ranlib = "arm-nacl-ranlib";
+
+                    let pepper = pepper
+                        .join_many(&[[get_platform_str(), "_arm_newlib"].concat(),
+                                     "bin".to_string()]);
+                    (pepper.join(cc),
+                     pepper.join(cxx),
+                     pepper.join(ar),
+                     pepper.join(ranlib))
+                }
+                Mode::Native(_) => unreachable!(),
+            };
+
+            NativeTools {
+                is_nacl: true,
+
+                cc: cc,
+                cxx: cxx,
+                ar: ar,
+                ranlib: ranlib,
+            }
+        }
+    }
 }
 
 impl Default for NativeTools {
     fn default() -> NativeTools {
-        let mode = get_nacl_target().expect("unknown target");
-
-        let pepper = get_sdk_root().join("toolchain");
-
-        let (cc, cxx, ar, ranlib) = match mode {
-            Mode::Portable => {
-                let cc     = "pnacl-clang";
-                let cxx    = "pnacl-clang++";
-                let ar     = "pnacl-ar";
-                let ranlib = "pnacl-ranlib";
-
-                let tc: String = [get_platform_str(), "_pnacl"].concat();
-                let pepper: Path = pepper.join(tc);
-                let pepper = pepper.join("bin");
-                (pepper.join(cc),
-                 pepper.join(cxx),
-                 pepper.join(ar),
-                 pepper.join(ranlib))
-            }
-            Mode::Native(arch) if arch == "i686" || arch == "x86_64" => {
-                let cc: String     = [arch, "-nacl-gcc"].concat();
-                let cxx: String    = [arch, "-nacl-g++"].concat();
-                let ar: String     = [arch, "-nacl-ar"].concat();
-                let ranlib: String = [arch, "-nacl-ranlib"].concat();
-
-                let pepper = pepper
-                    .join_many(&[[get_platform_str(), "_x86_glibc"].concat(),
-                                 "bin".to_string()]);
-                (pepper.join(cc),
-                 pepper.join(cxx),
-                 pepper.join(ar),
-                 pepper.join(ranlib))
-            }
-            Mode::Native("arm") => {
-                let cc     = "arm-nacl-gcc";
-                let cxx    = "arm-nacl-g++";
-                let ar     = "arm-nacl-ar";
-                let ranlib = "arm-nacl-ranlib";
-
-                let pepper = pepper
-                    .join_many(&[[get_platform_str(), "_arm_newlib"].concat(),
-                                 "bin".to_string()]);
-                (pepper.join(cc),
-                 pepper.join(cxx),
-                 pepper.join(ar),
-                 pepper.join(ranlib))
-            }
-            Mode::Native(_) => unreachable!(),
-        };
-
-        NativeTools {
-            cc: cc,
-            cxx: cxx,
-            ar: ar,
-            ranlib: ranlib,
-        }
+        let target = getenv("TARGET").unwrap();
+        NativeTools::new(target.as_slice())
     }
 }
 
@@ -130,7 +228,10 @@ impl ConfigureMake {
                built_libs: &[(Path, String)],
                src_dir: Path) -> ConfigureMake {
         let sdk = get_sdk_root();
-        let target = get_nacl_target();
+        let triple = getenv("TARGET").unwrap();
+        let target = get_nacl_target(triple.as_slice());
+
+        let tools: NativeTools = NativeTools::new(triple.as_slice());
 
         let extra_flags = format!("-I{}/include",
                                   sdk.display());
@@ -139,7 +240,8 @@ impl ConfigureMake {
                                             extra_flags, sdk.display()),
             _ => extra_flags,
         };
-        let extra_flags = format!("{} -D__USE_GNU", extra_flags);
+        let extra_flags = if tools.is_nacl { format!("{} -D__USE_GNU", extra_flags) }
+                          else             { extra_flags };
         let args = args.iter()
             .map(|str| {
                 if str.as_slice().starts_with("CFLAGS=") ||
@@ -151,7 +253,7 @@ impl ConfigureMake {
             }).collect();
 
         ConfigureMake {
-            tools: Default::default(),
+            tools: tools,
             args:  args,
             built_libs: built_libs.iter().map(|&(ref p, ref l): &(Path, String)| {
                 assert!(p.is_relative());
@@ -339,7 +441,7 @@ pub struct Archive {
 impl Archive {
     pub fn new(out_stem: &str) -> Archive {
         let NativeTools {
-            cc, cxx, ar, ranlib,
+            cc, cxx, ar, ranlib, ..
         } = Default::default();
 
         let out_dir = getenv("OUT_DIR").unwrap();
@@ -393,7 +495,8 @@ impl Archive {
         let mut a = Vec::new();
 
         let sdk = get_sdk_root();
-        let target = get_nacl_target();
+        let triple = getenv("TARGET").unwrap();
+        let target = get_nacl_target(triple.as_slice());
 
         a.push(format!("-I{}/include", sdk.display()));
         match target {

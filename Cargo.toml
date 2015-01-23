@@ -1,6 +1,7 @@
 [package]
 name = "pnacl-build-helper"
-version = "1.2.0"
+version = "1.3.0"
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 description = "Build script helper for building PNaCl/NaCl C/CXX libraries from source"
 license = "MPL-2.0"
+repository = "https://github.com/DiamondLovesYou/cargo-pnacl-helper"
