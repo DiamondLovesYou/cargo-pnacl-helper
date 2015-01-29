@@ -5,7 +5,7 @@ extern crate libc;
 use std::cell::Cell;
 use std::collections::RingBuf;
 use std::default::Default;
-use std::io::{Command, TempDir};
+use std::old_io::{Command, TempDir};
 use std::os::{change_dir};
 
 #[derive(Show, Eq, PartialEq, Clone, Hash, Copy)]
@@ -282,8 +282,8 @@ impl ConfigureMake {
 
     /// Do we need to rebuild this?
     pub fn is_fresh(&self) -> bool {
-        use std::io::fs::{walk_dir, readdir, stat};
-        use std::io::fs::PathExtensions;
+        use std::old_io::fs::{walk_dir, readdir, stat};
+        use std::old_io::fs::PathExtensions;
         use std::cmp::{max, min};
         use std::num::Int;
         if self.fresh.get().is_some() {
@@ -417,7 +417,7 @@ impl ConfigureMake {
 
 fn run_tool(mut cmd: Command) {
     use libc;
-    use std::io::process::InheritFd;
+    use std::old_io::process::InheritFd;
 
     println!("{:?}", cmd);
 
@@ -464,7 +464,7 @@ impl Archive {
 
     fn src_obj(&mut self, src: &str) -> (Path,
                                          Path) {
-        use std::io::fs::PathExtensions;
+        use std::old_io::fs::PathExtensions;
 
         let src = Path::new(src);
         let stem = src.filestem_str().expect(format!("most odd source filename you've got there: `{}`",
