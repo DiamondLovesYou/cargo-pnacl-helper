@@ -1,14 +1,21 @@
-#![allow(unstable)]
+#![feature(collections)]
+#![feature(core)]
+#![feature(fs_time)]
+#![feature(fs_walk)]
+#![feature(path_ext)]
 
-extern crate libc;
+extern crate tempdir;
 
 use std::cell::Cell;
-use std::collections::RingBuf;
+use std::collections::VecDeque;
 use std::default::Default;
-use std::old_io::{Command, TempDir};
-use std::os::{change_dir};
+use std::process::{Command};
+use std::env::set_current_dir;
+use std::path::{Path, PathBuf};
 
-#[derive(Show, Eq, PartialEq, Clone, Hash, Copy)]
+use tempdir::TempDir;
+
+#[derive(Debug, Eq, PartialEq, Clone, Hash, Copy)]
 pub enum Mode {
     Portable,
     Native(&'static str),
@@ -27,14 +34,14 @@ fn get_platform_str() -> &'static str {
     "win"
 }
 
-pub fn get_sdk_root() -> Path {
+pub fn get_sdk_root() -> PathBuf {
     match getenv("NACL_SDK_ROOT") {
         None => panic!("Please set NACL_SDK_ROOT to your local pepper sdk"),
-        Some(p) => Path::new(p),
+        Some(p) => Path::new(&p).to_path_buf(),
     }
 }
 pub fn get_nacl_target(v: &str) -> Option<Mode> {
-    match v.as_slice() {
+    match v {
         "le32-unknown-nacl" => Some(Mode::Portable),
         "i686-unknown-nacl" => Some(Mode::Native("i686")),
         "x86_64-unknown-nacl" => Some(Mode::Native("x86_64")),
@@ -44,13 +51,21 @@ pub fn get_nacl_target(v: &str) -> Option<Mode> {
 }
 
 fn getenv(v: &str) -> Option<String> {
-    use std::os::getenv;
-    let r = getenv(v);
+    use std::env::var;
+    use std::env::VarError::NotPresent;
+    let r = match var(v) {
+        Ok(v) => Some(v),
+        Err(NotPresent) => None,
+        Err(_) => {
+            panic!("`{}` value isn't unicode", v);
+        }
+    };
     println!("{} = {:?}", v, r);
     r
 }
 
 mod non_nacl {
+    use std::path::{Path, PathBuf};
     use super::getenv;
     fn get_var(var_base: &str) -> Result<String, String> {
         let target = getenv("TARGET")
@@ -63,9 +78,9 @@ mod non_nacl {
         let target_u = target.split('-')
             .collect::<Vec<&str>>()
             .connect("_");
-        let res = getenv(format!("{}_{}", var_base, target).as_slice())
-            .or_else(|| getenv(format!("{}_{}", var_base, target_u).as_slice()))
-            .or_else(|| getenv(format!("{}_{}", kind, var_base).as_slice()))
+        let res = getenv(&format!("{}_{}", var_base, target)[..])
+            .or_else(|| getenv(&format!("{}_{}", var_base, target_u)[..]))
+            .or_else(|| getenv(&format!("{}_{}", kind, var_base)[..]))
             .or_else(|| getenv(var_base));
 
         match res {
@@ -73,8 +88,8 @@ mod non_nacl {
             None => Err("Could not get environment variable".to_string()),
         }
     }
-    pub fn gcc(target: &str) -> Path {
-        let is_android = target.find_str("android").is_some();
+    pub fn gcc(target: &str) -> PathBuf {
+        let is_android = target.find("android").is_some();
 
         let r = get_var("CC").unwrap_or(if cfg!(windows) {
             "gcc".to_string()
@@ -83,10 +98,11 @@ mod non_nacl {
         } else {
             "cc".to_string()
         });
-        Path::new(r)
+        Path::new(&r)
+            .to_path_buf()
     }
-    pub fn gxx(target: &str) -> Path {
-        let is_android = target.find_str("android").is_some();
+    pub fn gxx(target: &str) -> PathBuf {
+        let is_android = target.find("android").is_some();
 
         let r = get_var("CXX").unwrap_or(if cfg!(windows) {
             "g++".to_string()
@@ -95,21 +111,23 @@ mod non_nacl {
         } else {
             "c++".to_string()
         });
-        Path::new(r)
+        Path::new(&r)
+            .to_path_buf()
     }
 
-    pub fn ar(target: &str) -> Path {
-        let is_android = target.find_str("android").is_some();
+    pub fn ar(target: &str) -> PathBuf {
+        let is_android = target.find("android").is_some();
 
         let r = get_var("AR").unwrap_or(if is_android {
             format!("{}-ar", target)
         } else {
             "ar".to_string()
         });
-        Path::new(r)
+        Path::new(&r)
+            .to_path_buf()
     }
-    pub fn ranlib(target: &str) -> Path {
-        let is_android = target.find_str("android").is_some();
+    pub fn ranlib(target: &str) -> PathBuf {
+        let is_android = target.find("android").is_some();
 
         let r = get_var("RANLIB").unwrap_or(if cfg!(windows) {
             "ranlib".to_string()
@@ -118,7 +136,8 @@ mod non_nacl {
         } else {
             "ranlib".to_string()
         });
-        Path::new(r)
+        Path::new(&r)
+            .to_path_buf()
     }
 }
 
@@ -126,10 +145,10 @@ mod non_nacl {
 pub struct NativeTools {
     pub is_nacl: bool,
 
-    pub cc:     Path,
-    pub cxx:    Path,
-    pub ar:     Path,
-    pub ranlib: Path,
+    pub cc:     PathBuf,
+    pub cxx:    PathBuf,
+    pub ar:     PathBuf,
+    pub ranlib: PathBuf,
 }
 impl NativeTools {
     pub fn new(target: &str) -> NativeTools {
@@ -138,10 +157,10 @@ impl NativeTools {
             NativeTools {
                 is_nacl: false,
 
-                cc: non_nacl::gcc(target.as_slice()),
-                cxx: non_nacl::gxx(target.as_slice()),
-                ar: non_nacl::ar(target.as_slice()),
-                ranlib: non_nacl::ranlib(target.as_slice()),
+                cc: non_nacl::gcc(&target[..]),
+                cxx: non_nacl::gxx(&target[..]),
+                ar: non_nacl::ar(&target[..]),
+                ranlib: non_nacl::ranlib(&target[..]),
             }
         } else {
             let mode = mode.unwrap();
@@ -155,7 +174,7 @@ impl NativeTools {
                     let ranlib = "pnacl-ranlib";
 
                     let tc: String = [get_platform_str(), "_pnacl"].concat();
-                    let pepper: Path = pepper.join(tc);
+                    let pepper: PathBuf = pepper.join(tc);
                     let pepper = pepper.join("bin");
                     (pepper.join(cc),
                      pepper.join(cxx),
@@ -169,8 +188,8 @@ impl NativeTools {
                     let ranlib: String = [arch, "-nacl-ranlib"].concat();
 
                     let pepper = pepper
-                        .join_many(&[[get_platform_str(), "_x86_glibc"].concat(),
-                                     "bin".to_string()]);
+                        .join(format!("{}_x86_glibc", get_platform_str()));
+                    let pepper = pepper.join("bin");
                     (pepper.join(cc),
                      pepper.join(cxx),
                      pepper.join(ar),
@@ -183,8 +202,9 @@ impl NativeTools {
                     let ranlib = "arm-nacl-ranlib";
 
                     let pepper = pepper
-                        .join_many(&[[get_platform_str(), "_arm_newlib"].concat(),
-                                     "bin".to_string()]);
+                        .join(format!("{}_arm_newlib", get_platform_str()));
+                    let pepper = pepper.join("bin");
+
                     (pepper.join(cc),
                      pepper.join(cxx),
                      pepper.join(ar),
@@ -208,30 +228,30 @@ impl NativeTools {
 impl Default for NativeTools {
     fn default() -> NativeTools {
         let target = getenv("TARGET").unwrap();
-        NativeTools::new(target.as_slice())
+        NativeTools::new(&target[..])
     }
 }
 
 pub struct ConfigureMake {
     tools: NativeTools,
     args:  Vec<String>,
-    built_libs: Vec<(Path, String)>,
-    make_only_dirs: Option<Vec<Path>>,
+    built_libs: VecDeque<(PathBuf, String)>,
+    make_only_dirs: Option<VecDeque<PathBuf>>,
 
-    out_dir: Path,
-    src_dir: Path,
+    out_dir: PathBuf,
+    src_dir: PathBuf,
 
     fresh: Cell<Option<bool>>,
 }
 impl ConfigureMake {
     pub fn new(args: &[String],
-               built_libs: &[(Path, String)],
-               src_dir: Path) -> ConfigureMake {
+               built_libs: &[(PathBuf, String)],
+               src_dir: PathBuf) -> ConfigureMake {
         let sdk = get_sdk_root();
         let triple = getenv("TARGET").unwrap();
-        let target = get_nacl_target(triple.as_slice());
+        let target = get_nacl_target(&triple[..]);
 
-        let tools: NativeTools = NativeTools::new(triple.as_slice());
+        let tools: NativeTools = NativeTools::new(&triple[..]);
 
         let extra_flags = format!("-I{}/include",
                                   sdk.display());
@@ -244,8 +264,8 @@ impl ConfigureMake {
                           else             { extra_flags };
         let args = args.iter()
             .map(|str| {
-                if str.as_slice().starts_with("CFLAGS=") ||
-                    str.as_slice().starts_with("CXXFLAGS=") {
+                if str.starts_with("CFLAGS=") ||
+                    str.starts_with("CXXFLAGS=") {
                     format!("{} {}", str, extra_flags)
                 } else {
                     str.to_string()
@@ -255,24 +275,24 @@ impl ConfigureMake {
         ConfigureMake {
             tools: tools,
             args:  args,
-            built_libs: built_libs.iter().map(|&(ref p, ref l): &(Path, String)| {
+            built_libs: built_libs.iter().map(|&(ref p, ref l): &(PathBuf, String)| {
                 assert!(p.is_relative());
                 (p.clone(), l.clone())
             }).collect(),
             make_only_dirs: None,
 
-            out_dir: Path::new(getenv("OUT_DIR").unwrap()),
+            out_dir: Path::new(&getenv("OUT_DIR").unwrap()).to_path_buf(),
             src_dir: src_dir,
 
             fresh: Cell::new(None),
         }
     }
-    pub fn make_only_dir(&mut self, dir: Path) -> &mut ConfigureMake {
+    pub fn make_only_dir(&mut self, dir: PathBuf) -> &mut ConfigureMake {
         let mut m = self.make_only_dirs
             .take()
-            .unwrap_or_else(|| Vec::new() );
+            .unwrap_or_else(|| VecDeque::new() );
 
-        m.push(dir);
+        m.push_front(dir);
         self.make_only_dirs = Some(m);
         self
     }
@@ -282,8 +302,7 @@ impl ConfigureMake {
 
     /// Do we need to rebuild this?
     pub fn is_fresh(&self) -> bool {
-        use std::old_io::fs::{walk_dir, readdir, stat};
-        use std::old_io::fs::PathExtensions;
+        use std::fs::{metadata, walk_dir, read_dir};
         use std::cmp::{max, min};
         use std::num::Int;
         if self.fresh.get().is_some() {
@@ -291,7 +310,7 @@ impl ConfigureMake {
         } else {
             println!("checking freshness:");
             // get the mtime of the outputs:
-            let built_libs: Vec<Path> = self.built_libs
+            let built_libs: Vec<PathBuf> = self.built_libs
                 .iter()
                 .map(|&(ref p, ref s)| (p, s.split(':').next().expect("invalid extern lib spec?")) )
                 // TODO: PNaCl always uses lib.a, but this convention is not constant for other targets.
@@ -301,30 +320,34 @@ impl ConfigureMake {
             let mut oldest_lib: u64 = Int::max_value();
             for lib in built_libs.into_iter() {
                 let lib = self.out_dir.join(lib);
-                let stat = lib.stat();
+                let stat = metadata(&lib);
                 if stat.is_err() {
-                    println!("not fresh: stat on output library failed: `{:?}`", lib.display());
+                    println!("not fresh: stat on output library failed: `{}`", lib.display());
                     // not fresh. non-existant files will hit this too.
                     self.fresh.set(Some(false));
                     return false;
                 }
 
                 let stat = stat.unwrap();
-                oldest_lib = min(oldest_lib, stat.modified);
+                oldest_lib = min(oldest_lib, stat.modified());
             }
 
             let mut newest_timestamp: u64 = 0;
             let mut dir_iter = walk_dir(&self.src_dir).unwrap();
             for dir in dir_iter {
-                let files = readdir(&dir);
+                if dir.is_err() { continue; }
+                let dir = dir.unwrap().path();
+                let files = read_dir(&dir);
                 if !files.is_ok() { continue; }
 
-                for file in files.unwrap().into_iter() {
-                    let stat = stat(&file);
+                for file in files.unwrap() {
+                    if file.is_err() { continue; }
+                    let file = file.unwrap().path();
+                    let stat = metadata(&file);
                     if !stat.is_ok() { continue; }
                     let stat = stat.unwrap();
 
-                    newest_timestamp = max(newest_timestamp, stat.modified);
+                    newest_timestamp = max(newest_timestamp, stat.modified());
                 }
             }
 
@@ -344,14 +367,15 @@ impl ConfigureMake {
     }
 
     pub fn configure(&self) {
+        use std::ops::RangeFull;
         if self.is_fresh() { return; }
 
         let cfg = self.src_dir.join("configure");
 
-        assert!(change_dir(&self.out_dir).is_ok());
+        set_current_dir(&self.out_dir).unwrap();
 
         let mut cmd = Command::new(&cfg);
-        cmd.args(self.args.as_slice());
+        cmd.args(&self.args[..]);
 
         cmd.arg(format!("--host={}",
                         getenv("TARGET").unwrap()));
@@ -374,14 +398,16 @@ impl ConfigureMake {
         println!("");
         println!("");
 
-        assert!(change_dir(&self.src_dir).is_ok());
+        set_current_dir(&self.src_dir).unwrap();
     }
 
     pub fn make(self) {
         if !self.is_fresh() {
-            let make_prog = Path::new(getenv("MAKE").unwrap_or_else(|| "make".to_string() ));
+            let make = getenv("MAKE")
+                .unwrap_or_else(|| "make".to_string() );
+            let make_prog = Path::new(&make);
 
-            assert!(change_dir(&self.out_dir).is_ok());
+            set_current_dir(&self.out_dir).unwrap();
 
             let mut cmd = Command::new(&make_prog);
 
@@ -391,10 +417,14 @@ impl ConfigureMake {
             match self.make_only_dirs {
                 Some(ref dirs) => {
                     for dir in dirs.iter() {
-                        let mut dir_cmd = cmd.clone();
-                        dir_cmd.arg("-C")
+                        let mut cmd = Command::new(&make_prog);
+
+                        cmd.arg("-j")
+                            .arg(getenv("NUM_JOBS").unwrap_or_else(|| "1".to_string() ));
+
+                        cmd.arg("-C")
                             .arg(dir.display().to_string());
-                        run_tool(dir_cmd);
+                        run_tool(cmd);
                     }
                 }
                 None => run_tool(cmd),
@@ -403,7 +433,7 @@ impl ConfigureMake {
             println!("");
             println!("");
 
-            assert!(change_dir(&self.src_dir).is_ok());
+            set_current_dir(&self.src_dir).unwrap();
         }
 
         for (p, l) in self.built_libs.into_iter() {
@@ -416,27 +446,26 @@ impl ConfigureMake {
 }
 
 fn run_tool(mut cmd: Command) {
-    use libc;
-    use std::old_io::process::InheritFd;
+    use std::process::Stdio;
 
     println!("{:?}", cmd);
 
-    cmd.stdout(InheritFd(libc::STDOUT_FILENO));
-    cmd.stderr(InheritFd(libc::STDERR_FILENO));
+    cmd.stdout(Stdio::inherit());
+    cmd.stderr(Stdio::inherit());
     assert!(cmd.status().unwrap().success());
 }
 
 pub struct Archive {
-    cc:  Path,
-    cxx: Path,
-    ar:  Path,
-    ranlib: Path,
+    cc:  PathBuf,
+    cxx: PathBuf,
+    ar:  PathBuf,
+    ranlib: PathBuf,
 
     tmp: TempDir,
     doubles: u64,
-    obj_files: RingBuf<Path>,
+    obj_files: VecDeque<PathBuf>,
     libname: String,
-    output: Path,
+    output: PathBuf,
 }
 impl Archive {
     pub fn new(out_stem: &str) -> Archive {
@@ -454,37 +483,37 @@ impl Archive {
             ar:     ar,
             ranlib: ranlib,
 
-            tmp: TempDir::new(d.as_slice()).unwrap(),
+            tmp: TempDir::new(&d[..]).unwrap(),
             doubles: 1,
-            obj_files: RingBuf::new(),
+            obj_files: VecDeque::new(),
             libname: out_stem.to_string(),
-            output: Path::new(out_dir).join(lib_file),
+            output: Path::new(&out_dir).join(lib_file),
         }
     }
 
-    fn src_obj(&mut self, src: &str) -> (Path,
-                                         Path) {
-        use std::old_io::fs::PathExtensions;
+    fn src_obj(&mut self, src: &str) -> (PathBuf, PathBuf) {
+        use std::fs::PathExt;
 
         let src = Path::new(src);
-        let stem = src.filestem_str().expect(format!("most odd source filename you've got there: `{}`",
-                                                     src.display()).as_slice());
+        let stem = src.file_stem()
+            .expect("provided source is not a filename");
         let obj = Path::new(stem).with_extension("o");
         let obj = self.tmp.path().join(obj);
         let obj = if obj.exists() {
-            let obj = Path::new(format!("{}{}.o",
-                                        stem,
-                                        {
-                                            let d = self.doubles;
-                                            self.doubles += 1;
-                                            d
-                                        }));
+            let obj_str = format!("{}{}.o",
+                                  stem.to_str().unwrap(),
+                                  {
+                                      let d = self.doubles;
+                                      self.doubles += 1;
+                                      d
+                                  });
+            let obj = Path::new(&obj_str);
             self.tmp.path().join(obj)
         } else {
             obj
         };
         self.obj_files.push_front(obj.clone());
-        (src.clone(), obj)
+        (src.to_path_buf(), obj)
     }
 
     fn run(&mut self, cmd: Command) -> &mut Archive {
@@ -496,7 +525,7 @@ impl Archive {
 
         let sdk = get_sdk_root();
         let triple = getenv("TARGET").unwrap();
-        let target = get_nacl_target(triple.as_slice());
+        let target = get_nacl_target(&triple[..]);
 
         a.push(format!("-I{}/include", sdk.display()));
         match target {
@@ -517,7 +546,7 @@ impl Archive {
             .arg("-o")
             .arg(obj)
             .args(args)
-            .args(Archive::build_cflags().as_slice());
+            .args(&Archive::build_cflags()[..]);
 
         self.run(cmd)
     }
@@ -531,7 +560,7 @@ impl Archive {
             .arg("-o")
             .arg(obj)
             .args(args)
-            .args(Archive::build_cflags().as_slice());
+            .args(&Archive::build_cflags()[..]);
 
         self.run(cmd)
     }
@@ -547,8 +576,8 @@ impl Archive {
         }
         self.run(cmd);
 
-        let out_dir = self.output.dirname_str().unwrap();
+        let out_dir = self.output.parent().unwrap();
         println!("cargo:rustc-flags=-L {} -l {}:static",
-                 out_dir, self.libname);
+                 out_dir.display(), self.libname);
     }
 }
