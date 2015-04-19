@@ -1,4 +1,3 @@
-#![feature(collections)]
 #![feature(core)]
 #![feature(fs_time)]
 #![feature(fs_walk)]
@@ -333,7 +332,7 @@ impl ConfigureMake {
             }
 
             let mut newest_timestamp: u64 = 0;
-            let mut dir_iter = walk_dir(&self.src_dir).unwrap();
+            let dir_iter = walk_dir(&self.src_dir).unwrap();
             for dir in dir_iter {
                 if dir.is_err() { continue; }
                 let dir = dir.unwrap().path();
@@ -367,7 +366,6 @@ impl ConfigureMake {
     }
 
     pub fn configure(&self) {
-        use std::ops::RangeFull;
         if self.is_fresh() { return; }
 
         let cfg = self.src_dir.join("configure");
