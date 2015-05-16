@@ -303,7 +303,6 @@ impl ConfigureMake {
     pub fn is_fresh(&self) -> bool {
         use std::fs::{metadata, walk_dir, read_dir};
         use std::cmp::{max, min};
-        use std::num::Int;
         if self.fresh.get().is_some() {
             return self.fresh.get().unwrap();
         } else {
@@ -316,7 +315,7 @@ impl ConfigureMake {
                 .map(|(p, s)| p.join(format!("lib{}.a", s)) )
                 .collect();
 
-            let mut oldest_lib: u64 = Int::max_value();
+            let mut oldest_lib: u64 = u64::max_value();
             for lib in built_libs.into_iter() {
                 let lib = self.out_dir.join(lib);
                 let stat = metadata(&lib);
