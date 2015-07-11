@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 use std::default::Default;
 use std::process::{Command};
 use std::env::set_current_dir;
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
@@ -16,9 +17,18 @@ use std::os::unix::fs::MetadataExt;
 use tempdir::TempDir;
 
 #[derive(Debug, Eq, PartialEq, Clone, Hash, Copy)]
-pub enum Mode {
+pub enum NaClMode {
     Portable,
     Native(&'static str),
+}
+impl fmt::Display for NaClMode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let s = match self {
+            &NaClMode::Portable => "le32",
+            &NaClMode::Native(s) => s,
+        };
+        write!(f, "{}", s)
+    }
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -40,12 +50,12 @@ pub fn get_sdk_root() -> PathBuf {
         Some(p) => Path::new(&p).to_path_buf(),
     }
 }
-pub fn get_nacl_target(v: &str) -> Option<Mode> {
+pub fn get_nacl_target(v: &str) -> Option<NaClMode> {
     match v {
-        "le32-unknown-nacl" => Some(Mode::Portable),
-        "i686-unknown-nacl" => Some(Mode::Native("i686")),
-        "x86_64-unknown-nacl" => Some(Mode::Native("x86_64")),
-        "arm-unknown-nacl" => Some(Mode::Native("arm")),
+        "le32-unknown-nacl" => Some(NaClMode::Portable),
+        "i686-unknown-nacl" => Some(NaClMode::Native("i686")),
+        "x86_64-unknown-nacl" => Some(NaClMode::Native("x86_64")),
+        "arm-unknown-nacl" => Some(NaClMode::Native("arm")),
         _ => None,
     }
 }
@@ -167,7 +177,7 @@ impl NativeTools {
             let pepper = get_sdk_root().join("toolchain");
 
             let (cc, cxx, ar, ranlib) = match mode {
-                Mode::Portable => {
+                NaClMode::Portable => {
                     let cc     = "pnacl-clang";
                     let cxx    = "pnacl-clang++";
                     let ar     = "pnacl-ar";
@@ -181,7 +191,7 @@ impl NativeTools {
                      pepper.join(ar),
                      pepper.join(ranlib))
                 }
-                Mode::Native(arch) if arch == "i686" || arch == "x86_64" => {
+                NaClMode::Native(arch) if arch == "i686" || arch == "x86_64" => {
                     let cc: String     = [arch, "-nacl-gcc"].concat();
                     let cxx: String    = [arch, "-nacl-g++"].concat();
                     let ar: String     = [arch, "-nacl-ar"].concat();
@@ -195,7 +205,7 @@ impl NativeTools {
                      pepper.join(ar),
                      pepper.join(ranlib))
                 }
-                Mode::Native("arm") => {
+                NaClMode::Native("arm") => {
                     let cc     = "arm-nacl-gcc";
                     let cxx    = "arm-nacl-g++";
                     let ar     = "arm-nacl-ar";
@@ -210,7 +220,7 @@ impl NativeTools {
                      pepper.join(ar),
                      pepper.join(ranlib))
                 }
-                Mode::Native(_) => unreachable!(),
+                NaClMode::Native(_) => unreachable!(),
             };
 
             NativeTools {
@@ -231,6 +241,28 @@ impl Default for NativeTools {
         NativeTools::new(&target[..])
     }
 }
+
+#[cfg(not(target_os = "nacl"))]
+pub fn print_lib_paths() {
+    let mode = get_nacl_target(getenv("TARGET").unwrap().as_ref());
+    if mode.is_none() { return; }
+    let mode = mode.unwrap();
+
+    let pepper = get_sdk_root().join("toolchain");
+    let tc: String = [get_platform_str(), "_pnacl"].concat();
+    let mut pepper: PathBuf = pepper.join(tc);
+    let (arch, lib) = match mode {
+        NaClMode::Portable => ("le32", "lib"),
+        NaClMode::Native("i686") => ("x86_64", "lib32"),
+        NaClMode::Native(s) => (s, "lib"),
+    };
+    pepper.push(format!("{}-nacl", arch));
+    pepper.push(lib);
+
+    println!("cargo:rustc-flags=-L {}", pepper.display())
+}
+#[cfg(target_os = "nacl")]
+pub fn print_lib_paths() { }
 
 pub struct ConfigureMake {
     tools: NativeTools,
@@ -256,8 +288,8 @@ impl ConfigureMake {
         let extra_flags = format!("-I{}/include",
                                   sdk.display());
         let extra_flags = match target {
-            Some(Mode::Portable) => format!("{} -I{}/include/pnacl",
-                                            extra_flags, sdk.display()),
+            Some(NaClMode::Portable) => format!("{} -I{}/include/pnacl",
+                                                extra_flags, sdk.display()),
             _ => extra_flags,
         };
         let extra_flags = if tools.is_nacl { format!("{} -D__USE_GNU", extra_flags) }
@@ -527,7 +559,7 @@ impl Archive {
 
         a.push(format!("-I{}/include", sdk.display()));
         match target {
-            Some(Mode::Portable) => {
+            Some(NaClMode::Portable) => {
                 a.push(format!("-I{}/include/pnacl", sdk.display()))
             }
             _ => (),
