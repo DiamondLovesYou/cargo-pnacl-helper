@@ -1,5 +1,3 @@
-#![feature(core)]
-#![feature(fs_time)]
 #![feature(fs_walk)]
 #![feature(path_ext)]
 
@@ -11,6 +9,9 @@ use std::default::Default;
 use std::process::{Command};
 use std::env::set_current_dir;
 use std::path::{Path, PathBuf};
+
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 
 use tempdir::TempDir;
 
@@ -303,7 +304,6 @@ impl ConfigureMake {
     pub fn is_fresh(&self) -> bool {
         use std::fs::{metadata, walk_dir, read_dir};
         use std::cmp::{max, min};
-        use std::num::Int;
         if self.fresh.get().is_some() {
             return self.fresh.get().unwrap();
         } else {
@@ -316,7 +316,7 @@ impl ConfigureMake {
                 .map(|(p, s)| p.join(format!("lib{}.a", s)) )
                 .collect();
 
-            let mut oldest_lib: u64 = Int::max_value();
+            let mut oldest_lib: i64 = i64::max_value();
             for lib in built_libs.into_iter() {
                 let lib = self.out_dir.join(lib);
                 let stat = metadata(&lib);
@@ -328,10 +328,10 @@ impl ConfigureMake {
                 }
 
                 let stat = stat.unwrap();
-                oldest_lib = min(oldest_lib, stat.modified());
+                oldest_lib = min(oldest_lib, stat.mtime());
             }
 
-            let mut newest_timestamp: u64 = 0;
+            let mut newest_timestamp: i64 = 0;
             let dir_iter = walk_dir(&self.src_dir).unwrap();
             for dir in dir_iter {
                 if dir.is_err() { continue; }
@@ -346,7 +346,7 @@ impl ConfigureMake {
                     if !stat.is_ok() { continue; }
                     let stat = stat.unwrap();
 
-                    newest_timestamp = max(newest_timestamp, stat.modified());
+                    newest_timestamp = max(newest_timestamp, stat.mtime());
                 }
             }
 
