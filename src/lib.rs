@@ -264,6 +264,32 @@ pub fn print_lib_paths() {
 #[cfg(target_os = "nacl")]
 pub fn print_lib_paths() { }
 
+#[cfg(not(target_os = "nacl"))]
+pub fn set_pkg_config_envs() {
+    use std::env;
+    let mode = get_nacl_target(getenv("TARGET").unwrap().as_ref());
+    if mode.is_none() { return; }
+    let mode = mode.unwrap();
+
+    let pepper = get_sdk_root().join("toolchain");
+    let tc: String = [get_platform_str(), "_pnacl"].concat();
+    let mut pepper: PathBuf = pepper.join(tc);
+    let arch = match mode {
+        NaClMode::Portable => "le32",
+        _ => unimplemented!(),
+    };
+    pepper.push(format!("{}-nacl", arch));
+    pepper.push("usr/lib/pkgconfig");
+    //$NACL_SDK_ROOT/toolchain/$($NACL_SDK_ROOT/tools/getos.py)_pnacl/le32-nacl/usr/lib/pkgconfig
+
+    let mut new_paths: Vec<PathBuf> = Vec::with_capacity(1);
+    new_paths.push(pepper);
+    if let Some(paths) = getenv("PKG_CONFIG_LIBDIR") {
+        new_paths.extend(env::split_paths(&paths))
+    }
+    env::set_var("PKG_CONFIG_LIBDIR", env::join_paths(new_paths).unwrap());
+}
+
 pub struct ConfigureMake {
     tools: NativeTools,
     args:  Vec<String>,
