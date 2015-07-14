@@ -289,6 +289,7 @@ pub fn set_pkg_config_envs() {
         new_paths.extend(env::split_paths(&paths))
     }
     env::set_var("PKG_CONFIG_LIBDIR", env::join_paths(new_paths).unwrap());
+    env::set_var("PKG_CONFIG_ALLOW_CROSS", "1");
 }
 #[cfg(target_os = "nacl")]
 pub fn set_pkg_config_envs() { }
