@@ -253,13 +253,14 @@ pub fn print_lib_paths() {
     let mut pepper: PathBuf = pepper.join(tc);
     let (arch, lib) = match mode {
         NaClMode::Portable => ("le32", "lib"),
-        NaClMode::Native("i686") => ("x86_64", "lib32"),
-        NaClMode::Native(s) => (s, "lib"),
+        _ => unimplemented!(),
     };
     pepper.push(format!("{}-nacl", arch));
-    pepper.push(lib);
+    let main = pepper.join(lib);
+    let installed = pepper.join("usr/lib");
 
-    println!("cargo:rustc-flags=-L {}", pepper.display())
+    println!("cargo:rustc-flags=-L {}", main.display());
+    println!("cargo:rustc-flags=-L {}", installed.display());
 }
 #[cfg(target_os = "nacl")]
 pub fn print_lib_paths() { }
@@ -289,6 +290,8 @@ pub fn set_pkg_config_envs() {
     }
     env::set_var("PKG_CONFIG_LIBDIR", env::join_paths(new_paths).unwrap());
 }
+#[cfg(target_os = "nacl")]
+pub fn set_pkg_config_envs() { }
 
 pub struct ConfigureMake {
     tools: NativeTools,
