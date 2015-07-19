@@ -516,10 +516,7 @@ fn run_tool(mut cmd: Command) {
 }
 
 pub struct Archive {
-    cc:  PathBuf,
-    cxx: PathBuf,
-    ar:  PathBuf,
-    ranlib: PathBuf,
+    tools: NativeTools,
 
     tmp: TempDir,
     doubles: u64,
@@ -529,19 +526,12 @@ pub struct Archive {
 }
 impl Archive {
     pub fn new(out_stem: &str) -> Archive {
-        let NativeTools {
-            cc, cxx, ar, ranlib, ..
-        } = Default::default();
-
         let out_dir = getenv("OUT_DIR").unwrap();
 
         let d: String = ["lib", out_stem, "-objs"].concat();
         let lib_file: String = ["lib", out_stem, ".a"].concat();
         Archive {
-            cc:     cc,
-            cxx:    cxx,
-            ar:     ar,
-            ranlib: ranlib,
+            tools: Default::default(),
 
             tmp: TempDir::new(&d[..]).unwrap(),
             doubles: 1,
@@ -580,7 +570,7 @@ impl Archive {
         run_tool(cmd);
         self
     }
-    fn build_cflags() -> Vec<String> {
+    fn nacl_build_cflags() -> Vec<String> {
         let mut a = Vec::new();
 
         let sdk = get_sdk_root();
@@ -600,13 +590,16 @@ impl Archive {
     pub fn cc(&mut self, src: &str, args: &[String]) -> &mut Archive {
         let (src, obj) = self.src_obj(src);
 
-        let mut cmd = Command::new(&self.cc);
+        let mut cmd = Command::new(&self.tools.cc);
         cmd.arg("-c")
             .arg(src)
             .arg("-o")
             .arg(obj)
-            .args(args)
-            .args(&Archive::build_cflags()[..]);
+            .args(args);
+
+        if self.tools.is_nacl {
+            cmd.args(&Archive::nacl_build_cflags()[..]);
+        }
 
         self.run(cmd)
     }
@@ -614,13 +607,16 @@ impl Archive {
     pub fn cxx(&mut self, src: &str, args: &[String]) -> &mut Archive {
         let (src, obj) = self.src_obj(src);
 
-        let mut cmd = Command::new(&self.cxx);
+        let mut cmd = Command::new(&self.tools.cxx);
         cmd.arg("-c")
             .arg(src)
             .arg("-o")
             .arg(obj)
-            .args(args)
-            .args(&Archive::build_cflags()[..]);
+            .args(args);
+
+        if self.tools.is_nacl {
+            cmd.args(&Archive::nacl_build_cflags()[..]);
+        }
 
         self.run(cmd)
     }
@@ -628,7 +624,7 @@ impl Archive {
     pub fn archive(mut self) {
         let ar_cmds = "crus";
 
-        let mut cmd = Command::new(&self.ar);
+        let mut cmd = Command::new(&self.tools.ar);
         cmd.arg(ar_cmds)
             .arg(self.output.clone());
         for f in self.obj_files.iter() {
