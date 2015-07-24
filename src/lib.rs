@@ -390,7 +390,7 @@ impl ConfigureMake {
                 }
 
                 let stat = stat.unwrap();
-                oldest_lib = min(oldest_lib, stat.mtime());
+                oldest_lib = min(oldest_lib, stat.mtime() as i64);
             }
 
             let mut newest_timestamp: i64 = 0;
@@ -408,7 +408,7 @@ impl ConfigureMake {
                     if !stat.is_ok() { continue; }
                     let stat = stat.unwrap();
 
-                    newest_timestamp = max(newest_timestamp, stat.mtime());
+                    newest_timestamp = max(newest_timestamp, stat.mtime() as i64);
                 }
             }
 
