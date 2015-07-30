@@ -261,11 +261,15 @@ pub fn print_lib_paths() {
     let installed = pepper.join("usr/lib");
     let ports = root.join("lib")
         .join(ports)
-        .join(lib);
+        .join(if getenv("DEBUG") == Some("true".to_string()) {
+            "Debug"
+        } else {
+            "Release"
+        });
 
-    println!("cargo:rustc-flags=-L {}", main.display());
-    println!("cargo:rustc-flags=-L {}", installed.display());
-    println!("cargo:rustc-flags=-L {}", ports.display());
+    println!("cargo:rustc-link-search=native={}", main.display());
+    println!("cargo:rustc-link-search=native={}", installed.display());
+    println!("cargo:rustc-link-search=native={}", ports.display());
 }
 #[cfg(target_os = "nacl")]
 pub fn print_lib_paths() { }
