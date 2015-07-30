@@ -248,19 +248,24 @@ pub fn print_lib_paths() {
     if mode.is_none() { return; }
     let mode = mode.unwrap();
 
-    let pepper = get_sdk_root().join("toolchain");
+    let root = get_sdk_root();
+    let pepper = root.join("toolchain");
     let tc: String = [get_platform_str(), "_pnacl"].concat();
     let mut pepper: PathBuf = pepper.join(tc);
-    let (arch, lib) = match mode {
-        NaClMode::Portable => ("le32", "lib"),
+    let (ports, arch, lib) = match mode {
+        NaClMode::Portable => ("pnacl", "le32", "lib"),
         _ => unimplemented!(),
     };
     pepper.push(format!("{}-nacl", arch));
     let main = pepper.join(lib);
     let installed = pepper.join("usr/lib");
+    let ports = root.join("lib")
+        .join(ports)
+        .join(lib);
 
     println!("cargo:rustc-flags=-L {}", main.display());
     println!("cargo:rustc-flags=-L {}", installed.display());
+    println!("cargo:rustc-flags=-L {}", ports.display());
 }
 #[cfg(target_os = "nacl")]
 pub fn print_lib_paths() { }
