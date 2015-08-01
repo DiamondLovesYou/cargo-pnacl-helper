@@ -642,7 +642,7 @@ impl Archive {
         self.run(cmd);
 
         let out_dir = self.output.parent().unwrap();
-        println!("cargo:rustc-flags=-L {} -l {}:static",
-                 out_dir.display(), self.libname);
+        println!("cargo:rustc-link-search=native={}", out_dir.display());
+        println!("cargo:rustc-link-lib=static={}", self.libname);
     }
 }
