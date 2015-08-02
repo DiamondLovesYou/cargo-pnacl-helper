@@ -348,6 +348,27 @@ impl ConfigureMake {
             args:  args,
             built_libs: built_libs.iter().map(|&(ref p, ref l): &(PathBuf, String)| {
                 assert!(p.is_relative());
+                // map old style `foo:static` into `static=foo`.
+                let mut split = l.split(':');
+                let l = if let Some(lib) = split.next() {
+                    let mut lib = lib.to_string();
+                    let mut kind = if let Some(k) = split.next() {
+                        k
+                    } else {
+                        return (p.clone(), l.clone());
+                    };
+                    loop {
+                        let next = match split.next() {
+                            None => { break; },
+                            Some(next) => next,
+                        };
+                        lib = format!("{}:{}", lib, kind);
+                        kind = next;
+                    }
+                    format!("{}={}", kind, lib)
+                } else {
+                    l.clone()
+                };
                 (p.clone(), l.clone())
             }).collect(),
             make_only_dirs: None,
@@ -507,8 +528,9 @@ impl ConfigureMake {
 
         for (p, l) in self.built_libs.into_iter() {
             let p = self.out_dir.join(p);
-            println!("cargo:rustc-flags=-L {} -l {}",
-                     p.display(), l);
+            println!("cargo:rustc-link-lib={}", l);
+            println!("cargo:rustc-link-search=native={}",
+                     p.display());
             println!("cargo:libdir={}", p.display());
         }
     }
