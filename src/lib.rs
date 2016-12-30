@@ -1,7 +1,6 @@
-#![feature(fs_walk)]
-#![feature(path_ext)]
 
 extern crate tempdir;
+extern crate walkdir;
 
 use std::cell::Cell;
 use std::collections::VecDeque;
@@ -394,7 +393,8 @@ impl ConfigureMake {
 
     /// Do we need to rebuild this?
     pub fn is_fresh(&self) -> bool {
-        use std::fs::{metadata, walk_dir, read_dir};
+        use walkdir::WalkDir;
+        use std::fs::{metadata, read_dir};
         use std::cmp::{max, min};
         if self.fresh.get().is_some() {
             return self.fresh.get().unwrap();
@@ -424,10 +424,11 @@ impl ConfigureMake {
             }
 
             let mut newest_timestamp: i64 = 0;
-            let dir_iter = walk_dir(&self.src_dir).unwrap();
+            let dir_iter = WalkDir::new(&self.src_dir).into_iter();
             for dir in dir_iter {
                 if dir.is_err() { continue; }
-                let dir = dir.unwrap().path();
+                let dir = dir.unwrap();
+                let dir = dir.path();
                 let files = read_dir(&dir);
                 if !files.is_ok() { continue; }
 
@@ -573,8 +574,6 @@ impl Archive {
     }
 
     fn src_obj(&mut self, src: &str) -> (PathBuf, PathBuf) {
-        use std::fs::PathExt;
-
         let src = Path::new(src);
         let stem = src.file_stem()
             .expect("provided source is not a filename");

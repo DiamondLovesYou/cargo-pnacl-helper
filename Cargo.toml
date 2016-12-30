@@ -12,3 +12,4 @@ path = "src/lib.rs"
 
 [dependencies]
 tempdir = "*"
+walkdir = "1"
