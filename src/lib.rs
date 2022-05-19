@@ -1,5 +1,5 @@
 
-extern crate tempdir;
+extern crate tempfile;
 extern crate walkdir;
 
 use std::cell::Cell;
@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
-use tempdir::TempDir;
+use tempfile::{Builder, TempDir};
 
 #[derive(Debug, Eq, PartialEq, Clone, Hash, Copy)]
 pub enum NaClMode {
@@ -565,7 +565,7 @@ impl Archive {
         Archive {
             tools: Default::default(),
 
-            tmp: TempDir::new(&d[..]).unwrap(),
+            tmp: Builder::new().prefix(&d[..]).tempdir().unwrap(),
             doubles: 1,
             obj_files: VecDeque::new(),
             libname: out_stem.to_string(),
